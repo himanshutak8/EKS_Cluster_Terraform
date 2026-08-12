@@ -323,7 +323,7 @@ Think of it as a **work order**:
 
 ---
 
-<a id="decoding-a-nodeclaim></a>
+<a id="decoding-a-nodeclaim"></a>
 ### Decoding a NodeClaim
 
 ```
@@ -340,7 +340,7 @@ default-znnnq   c6a.2xlarge   on-demand   us-east-1a   ip-192-168-11-13...   Tru
 
 ---
 
-<a id="the-full-karpenter-workflow></a>
+<a id="the-full-karpenter-workflow"></a>
 ### The full Karpenter workflow
 
 ```mermaid
@@ -378,7 +378,7 @@ flowchart TB
 
 ---
 
-<a id="the-key-mental-model></a>
+<a id="the-key-mental-model"></a>
 ### The key mental model
 
 ```
@@ -424,7 +424,7 @@ questions. Understanding the split is the key to configuring Karpenter well.
 
 ---
 
-<a id="how-they-connect></a>
+<a id="how-they-connect"></a>
 ### How they connect
 
 
@@ -447,7 +447,7 @@ flowchart LR
 
 ---
 
-<a id="ec2nodeclass--the-how-aws-infrastructure></a>
+<a id="ec2nodeclass--the-how-aws-infrastructure"></a>
 ### EC2NodeClass — the "HOW" (AWS infrastructure)
 
 ```yaml
@@ -481,7 +481,7 @@ spec:
 
 ---
 
-<a id="nodepool--the-what-policy--limits></a>
+<a id="nodepool--the-what-policy--limits"></a>
 ### NodePool — the "WHAT" (policy & limits)
 
 ```yaml
@@ -537,7 +537,7 @@ spec:
 
 ---
 
-<a id="the-mental-model></a>
+<a id="the-mental-model"></a>
 ### The mental model
 
 ```
