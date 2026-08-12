@@ -71,6 +71,8 @@ resource "helm_release" "karpenter_resources" {
   name      = "karpenter-resources"
   namespace = "karpenter"
   chart     = "${path.module}/karpenter_resources"
+  wait      = true
+  timeout   = 600    #◀── CHANGE: was `300`. Karpenter may take longer to create its NodeClaims and drain nodes, so we give it more time.
 
   values = [yamlencode({
     clusterName  = module.eks.cluster_name
@@ -78,6 +80,41 @@ resource "helm_release" "karpenter_resources" {
   })]
 
   depends_on = [helm_release.karpenter]   # CRDs must exist first
+}
+
+# ------------------------------------------------------------------
+# Destroy-time safety net: delete NodePools and wait for Karpenter to
+# drain its nodes BEFORE the controller / node group are torn down.
+# Prevents the finalizer deadlock ("context deadline exceeded").
+# ------------------------------------------------------------------
+resource "terraform_data" "karpenter_drain" {
+  # Values captured here are the ONLY things a destroy provisioner may
+  # reference (via self.*) — you can't use var.* or other resources at destroy.
+  input = {
+    cluster_name = module.eks.cluster_name
+    region       = var.aws_region
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -e
+      aws eks update-kubeconfig --name ${self.input.cluster_name} --region ${self.input.region}
+      # Delete NodePools so Karpenter terminates the nodes it owns
+      kubectl delete nodepool --all --ignore-not-found --timeout=300s || true
+      # Wait until no NodeClaims remain (max ~5 min)
+      for i in $(seq 1 30); do
+        if [ -z "$(kubectl get nodeclaims -o name 2>/dev/null)" ]; then
+          echo "All NodeClaims drained."
+          break
+        fi
+        echo "Waiting for Karpenter to drain nodes... ($i/30)"
+        sleep 10
+      done
+    EOT
+  }
+
+  depends_on = [helm_release.karpenter]
 }
 
 /*
