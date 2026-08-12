@@ -1,0 +1,5 @@
+# EKS cluster name — used for subnet & security-group discovery tags
+clusterName: ""
+
+# IAM role name that Karpenter-launched nodes assume
+nodeRoleName: ""
