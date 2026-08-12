@@ -1,10 +1,9 @@
-![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-7B42BC?logo=terraform&logoColor=white)
-![AWS](https://img.shields.io/badge/AWS-EKS-FF9900?logo=amazonaws&logoColor=white)
-![Kubernetes](https://img.shields.io/badge/Kubernetes-1.35-326CE5?logo=kubernetes&logoColor=white)
-![Karpenter](https://img.shields.io/badge/Karpenter-1.6.0-000000?logo=amazoneks&logoColor=white)
-![Helm](https://img.shields.io/badge/Helm-chart-0F1689?logo=helm&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green)
-
+[![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-7B42BC?logo=terraform&logoColor=white)](https://developer.hashicorp.com/terraform/docs)
+[![AWS](https://img.shields.io/badge/AWS-EKS-FF9900?logo=amazonaws&logoColor=white)](https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.35-326CE5?logo=kubernetes&logoColor=white)](https://kubernetes.io/docs/home/)
+[![Karpenter](https://img.shields.io/badge/Karpenter-1.6.0-000000?logo=amazoneks&logoColor=white)](https://karpenter.sh/docs/)
+[![Helm](https://img.shields.io/badge/Helm-chart-0F1689?logo=helm&logoColor=white)](https://helm.sh/docs/)
+[![License](https://img.shields.io/badge/License-MIT-green)](https://opensource.org/licenses/MIT)
 # Highly Scalable EKS Cluster with Karpenter (Terraform)
 
 Provisions a production-style **Amazon EKS** cluster with **Karpenter** for fast,
