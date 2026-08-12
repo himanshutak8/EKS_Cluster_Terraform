@@ -266,3 +266,105 @@ terraform destroy
 _Built as a Terraform learning project. Managed by Terraform — do not edit resources manually._
 
 That's the full README, sections ordered top-to-bottom: badges → intro → architecture → layout → prerequisites → cost → config → deploy → verify → notes → troubleshooting → teardown → providers. Copy it into Karpenter/README.md yourself and you're set.
+
+
+## Understanding Karpenter NodeClaims
+
+### What is a NodeClaim?
+
+A **NodeClaim is Karpenter's request for a single node.** It's the in-between object that
+connects *"I need capacity"* to *"here's a real EC2 instance."*
+
+Think of it as a **work order**:
+
+| Object | Role |
+|--------|------|
+| **NodePool** | The *policy* — "I'm allowed to make c/m/r nodes, spot or on-demand, up to 1000 vCPU" |
+| **NodeClaim** | *One specific order* against that policy — "give me one node that can hold these pending pods" |
+| **EC2 instance** | The *physical thing* fulfilling the order |
+| **Kubernetes Node** | How that instance appears inside the cluster |
+
+---
+
+### Decoding a NodeClaim
+
+```
+NAME            TYPE          CAPACITY    ZONE         NODE
+default-znnnq   c6a.2xlarge   on-demand   us-east-1a   ip-192-168-11-13...   True
+   │              │             │           │            │                    │
+   │              │             │           │            │                    └─ node joined & Ready
+   │              │             │           │            └─ the actual K8s Node it became
+   │              │             │           └─ AZ Karpenter chose
+   │              │             └─ it picked on-demand (not spot) this time
+   │              └─ the instance type it decided fits best
+   └─ auto-generated name, owned by the "default" NodePool
+```
+
+---
+
+### The full Karpenter workflow
+
+```mermaid
+flowchart TB
+    POD["Pod is Pending<br/>(scheduler can't place it)"]
+    KARP["Karpenter controller<br/>notices the pending pod"]
+    NP["Reads NodePool 'default'<br/>(requirements, limits)"]
+    CALC["Computes: what's the cheapest<br/>instance that fits these pods?"]
+    NCLAIM["Creates a NodeClaim<br/>(the work order)"]
+    NC["Reads EC2NodeClass 'default'<br/>(AMI, subnets, SG, IAM role)"]
+    EC2["Launches EC2 instance<br/>c6a.2xlarge in us-east-1a"]
+    JOIN["Instance boots, kubelet<br/>registers → K8s Node appears"]
+    READY["NodeClaim READY=True<br/>Pods scheduled onto it"]
+
+    POD --> KARP --> NP --> CALC --> NCLAIM --> NC --> EC2 --> JOIN --> READY
+
+    READY -.->|later, if empty/underutilized| DISRUPT["Consolidation:<br/>NodeClaim deleted →<br/>instance terminated"]
+```
+
+### Read it as a lifecycle
+
+1. **Pending pod** — the scheduler can't fit a pod on existing nodes → it stays `Pending`.
+2. **Karpenter observes** it and reads the **NodePool** to know what's allowed.
+3. **It solves a bin-packing problem** — "which single instance type is cheapest and still
+   fits all the pending pods?" → chose `c6a.2xlarge`.
+4. **Creates a NodeClaim** — this is the object you saw. At this moment it exists but has no
+   node yet (`READY=Unknown`).
+5. **Reads the EC2NodeClass** the NodeClaim references to get the *how*: which AMI, which
+   subnets (by `karpenter.sh/discovery` tag), which security groups, which IAM role.
+6. **Launches the EC2 instance** with all that config.
+7. **The instance boots**, kubelet registers it → a Kubernetes **Node** appears and gets
+   linked into the `NODE` column.
+8. **`READY=True`** — pods that were pending now schedule onto it.
+
+---
+
+### The key mental model
+
+```
+NodePool  ──(1 policy, many orders)──►  NodeClaim  ──(1:1)──►  EC2 Instance / Node
+   ▲                                        │
+   │                                        │  references
+   └────────── uses ──────────────►  EC2NodeClass (the "how")
+```
+
+- **One NodePool → many NodeClaims** (one per node it needs).
+- **Each NodeClaim → exactly one node.** Delete the NodeClaim and Karpenter terminates the
+  instance. This is *how consolidation works* — Karpenter just deletes NodeClaims it no
+  longer needs.
+- You **never create NodeClaims by hand** — Karpenter owns their entire lifecycle. They're
+  the internal accounting of *"nodes I've decided to run."*
+
+---
+
+### Handy commands
+
+```bash
+kubectl get nodeclaims                      # list all NodeClaims
+kubectl describe nodeclaim <name>           # full decision: requirements, price, resources
+kubectl get nodeclaim -o wide               # extra columns (instance type, zone, capacity)
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter | grep -i nodeclaim
+```
+
+I added a small Handy commands section at the end since it fits naturally in a reference doc — drop it if you want it kept purely conceptual.
+
+Want a companion NodePool-vs-EC2NodeClass.md explaining the "what vs how" split in the same style, so your docs/ folder builds into a proper Karpenter study set?
