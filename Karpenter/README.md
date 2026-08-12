@@ -11,8 +11,35 @@ cost-efficient node autoscaling — VPC, control plane, a bootstrap node group, 
 Karpenter (controller + `EC2NodeClass` + `NodePool`) — all in a **single `terraform apply`**.
 
 ---
+## Table of Contents
 
-## Architecture
+**Setup & Operations**
+- [Architecture](#architecture)
+- [Repository layout](#repository-layout)
+- [Prerequisites](#prerequisites)
+- [Cost estimate](#cost-estimate)
+- [Configuration](#configuration)
+- [Deploy](#deploy)
+- [Verify](#verify)
+- [Design notes](#design-notes)
+- [Troubleshooting](#troubleshooting)
+- [Teardown](#teardown)
+- [Provider summary](#provider-summary)
+
+**Understanding Karpenter NodeClaims**
+- [What is a NodeClaim?](#what-is-a-nodeclaim)
+- [Decoding a NodeClaim](#decoding-a-nodeclaim)
+- [The full Karpenter workflow](#the-full-karpenter-workflow)
+- [The key mental model](#the-key-mental-model)
+
+**NodePool vs EC2NodeClass**
+- [How they connect](#how-they-connect)
+- [EC2NodeClass — the "HOW"](#ec2nodeclass--the-how-aws-infrastructure)
+- [NodePool — the "WHAT"](#nodepool--the-what-policy--limits)
+- [The mental model](#the-mental-model)
+
+<a id="architecture"></a>
+## Architecture 
 
 ```mermaid
 flowchart TB
@@ -56,6 +83,7 @@ sit underutilized, Karpenter **consolidates** and terminates them.
 
 ---
 
+<a id="repository-layout"></a>
 ## Repository layout
 
 ```
@@ -76,6 +104,7 @@ Karpenter/
 
 ---
 
+<a id="prerequisites"></a>
 ## Prerequisites
 
 | Tool | Notes |
@@ -87,6 +116,7 @@ Karpenter/
 
 ---
 
+<a id="cost-estimate"></a>
 ## Cost estimate
 
 Rough **us-east-1** on-demand pricing for the always-on baseline. Karpenter-provisioned
@@ -114,6 +144,7 @@ consolidation).
 
 ---
 
+<a id="configuration"></a>
 ## Configuration
 
 Key variables (`variables.tf`) — override via `terraform.tfvars` or `-var`:
@@ -129,6 +160,7 @@ Key variables (`variables.tf`) — override via `terraform.tfvars` or `-var`:
 
 ---
 
+<a id="deploy"></a>
 ## Deploy
 
 ```bash
@@ -152,6 +184,7 @@ aws eks update-kubeconfig --region <region> --name <cluster-name>
 
 ---
 
+<a id="verify"></a>
 ## Verify
 
 ```bash
@@ -179,6 +212,7 @@ kubectl scale deployment inflate --replicas=0
 
 ---
 
+<a id="design-notes"></a>
 ## Design notes
 
 - **Why a bootstrap node group?** Karpenter's own controller pods need somewhere to run
@@ -214,6 +248,7 @@ kubectl scale deployment inflate --replicas=0
 
 ---
 
+<a id="troubleshooting"></a>
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -236,7 +271,7 @@ kubectl get events -n karpenter --sort-by=.lastTimestamp
 ```
 
 ---
-
+<a id="teardown"></a>
 ## Teardown
 
 ```bash
@@ -251,6 +286,7 @@ terraform destroy
 
 ---
 
+<a id="provider-summary"></a>
 ## Provider summary
 
 | Provider | Purpose |
@@ -270,6 +306,7 @@ That's the full README, sections ordered top-to-bottom: badges → intro → arc
 
 ## Understanding Karpenter NodeClaims
 
+<a id="what-is-a-nodeclaim"></a>
 ### What is a NodeClaim?
 
 A **NodeClaim is Karpenter's request for a single node.** It's the in-between object that
@@ -286,6 +323,7 @@ Think of it as a **work order**:
 
 ---
 
+<a id="decoding-a-nodeclaim></a>
 ### Decoding a NodeClaim
 
 ```
@@ -302,6 +340,7 @@ default-znnnq   c6a.2xlarge   on-demand   us-east-1a   ip-192-168-11-13...   Tru
 
 ---
 
+<a id="the-full-karpenter-workflow></a>
 ### The full Karpenter workflow
 
 ```mermaid
@@ -321,6 +360,7 @@ flowchart TB
     READY -.->|later, if empty/underutilized| DISRUPT["Consolidation:<br/>NodeClaim deleted →<br/>instance terminated"]
 ```
 
+
 ### Read it as a lifecycle
 
 1. **Pending pod** — the scheduler can't fit a pod on existing nodes → it stays `Pending`.
@@ -338,6 +378,7 @@ flowchart TB
 
 ---
 
+<a id="the-key-mental-model></a>
 ### The key mental model
 
 ```
@@ -367,4 +408,167 @@ kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter | grep -i nodeclai
 
 I added a small Handy commands section at the end since it fits naturally in a reference doc — drop it if you want it kept purely conceptual.
 
-Want a companion NodePool-vs-EC2NodeClass.md explaining the "what vs how" split in the same style, so your docs/ folder builds into a proper Karpenter study set?
+
+## NodePool vs EC2NodeClass — The "What" vs the "How"
+
+Karpenter splits node provisioning into **two custom resources** that answer two different
+questions. Understanding the split is the key to configuring Karpenter well.
+
+| Resource | Question it answers | Analogy |
+|----------|--------------------|---------|
+| **NodePool** | *What* kind of nodes am I allowed to make, and within what limits? | The **hiring policy** |
+| **EC2NodeClass** | *How* do I actually build a node on AWS? | The **onboarding checklist** |
+
+> **One-liner:** `NodePool` = requirements & limits (Kubernetes-facing). `EC2NodeClass` =
+> AWS infrastructure details (cloud-facing). A NodePool **references** an EC2NodeClass.
+
+---
+
+<a id="how-they-connect></a>
+### How they connect
+
+
+```mermaid
+flowchart LR
+    NP["NodePool 'default'<br/>WHAT: instance families,<br/>spot/on-demand, limits,<br/>consolidation"]
+    NC["EC2NodeClass 'default'<br/>HOW: AMI, subnets,<br/>security groups, IAM role"]
+    CLAIM["NodeClaim<br/>(one work order)"]
+    NODE["EC2 Instance / K8s Node"]
+
+    NP -->|nodeClassRef points to| NC
+    NP -->|creates| CLAIM
+    NC -->|provides AWS details to| CLAIM
+    CLAIM --> NODE
+```
+
+- The **NodePool** decides *whether* and *what* to launch.
+- It points to an **EC2NodeClass** via `nodeClassRef` for the *how*.
+- Together they produce a **NodeClaim**, which becomes a real node.
+
+---
+
+<a id="ec2nodeclass--the-how-aws-infrastructure></a>
+### EC2NodeClass — the "HOW" (AWS infrastructure)
+
+```yaml
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  amiFamily: AL2023                          # OS image family for the node
+  role: <karpenter-node-iam-role>            # IAM role the node assumes
+  amiSelectorTerms:
+    - alias: al2023@latest                   # which AMI version to use
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: <cluster>    # WHERE nodes launch (found by tag)
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: <cluster>    # which SGs to attach (found by tag)
+```
+
+| Field | Meaning |
+|-------|---------|
+| `amiFamily` / `amiSelectorTerms` | Which OS image the node boots from (AL2023, latest) |
+| `role` | The IAM role the node assumes (permissions for the kubelet, SSM, etc.) |
+| `subnetSelectorTerms` | **Discovers subnets by tag** — no hardcoded subnet IDs |
+| `securityGroupSelectorTerms` | **Discovers security groups by tag** — no hardcoded SG IDs |
+
+> **Why tag-based discovery matters:** you never paste subnet/SG IDs. Karpenter finds them
+> live via the `karpenter.sh/discovery=<cluster>` tags your Terraform applied. Rebuild the
+> cluster and it still works — nothing to update.
+
+---
+
+<a id="nodepool--the-what-policy--limits></a>
+### NodePool — the "WHAT" (policy & limits)
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:                          # ← points to the EC2NodeClass above
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:                          # the "allowed to make" rules
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot", "on-demand"]
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["c", "m", "r"]
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["4"]
+      expireAfter: 720h                       # recycle nodes every 30 days
+  limits:
+    cpu: "1000"                               # hard ceiling across all nodes in this pool
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m
+```
+
+| Section | Meaning |
+|---------|---------|
+| `nodeClassRef` | Links to the EC2NodeClass — the "how" |
+| `requirements` | Constrains **what** Karpenter may launch (arch, spot/on-demand, families, generation). Karpenter picks the cheapest that fits within these |
+| `expireAfter` | Max node lifetime — forces regular refresh/patching |
+| `limits.cpu` | **Hard cap** on total vCPUs this pool can provision — a safety guardrail |
+| `disruption` | When/how to remove nodes (consolidation for cost savings) |
+
+### Reading the `requirements`
+
+- `arch = amd64` → x86 nodes only.
+- `capacity-type ∈ {spot, on-demand}` → both allowed; Karpenter prefers cheaper when it fits.
+- `instance-category ∈ {c, m, r}` → compute-, general-, and memory-optimized families.
+- `instance-generation > 4` → only newer, more efficient generations (5, 6, 7...).
+
+> The **more instance types you allow**, the better Karpenter can bin-pack and find cheap
+> spot capacity. Narrow requirements = fewer options = potentially higher cost or Pending pods.
+
+---
+
+<a id="the-mental-model></a>
+### The mental model
+
+```
+                 ┌─────────────── EC2NodeClass (HOW) ───────────────┐
+                 │  AMI · subnets · security groups · IAM role      │
+                 └──────────────────────▲───────────────────────────┘
+                                        │ nodeClassRef
+┌──────────────── NodePool (WHAT) ──────┴───────────────────────────┐
+│  requirements · limits · disruption/consolidation                 │
+└───────────────────────────────────────────────────────────────────┘
+                                        │ produces
+                                        ▼
+                             NodeClaim → EC2 Instance / Node
+```
+
+- **Separation of concerns:** change *what* you run (NodePool) without touching *how* nodes
+  are built (EC2NodeClass), and vice-versa.
+- **Reuse:** many NodePools can share **one** EC2NodeClass (e.g. a spot pool + an on-demand
+  pool, both using the same AMI/subnets).
+- **Multiple NodePools** let you separate workloads — different instance types, taints,
+  weights, or limits per team/app.
+
+---
+
+### Handy commands
+
+```bash
+kubectl get nodepool
+kubectl describe nodepool default            # status, resource usage vs limits
+kubectl get ec2nodeclass
+kubectl describe ec2nodeclass default        # resolved subnets, SGs, AMIs
+```
+
+Now your docs/ set has two matching study notes: NodeClaim (the runtime object) and NodePool vs EC2NodeClass (the config split).
